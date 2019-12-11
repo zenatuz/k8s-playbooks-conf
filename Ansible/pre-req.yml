@@ -1,0 +1,92 @@
+# Ansible Playbook: pre-req.yml
+---
+- hosts: all
+  tasks:
+
+    - name: Enable EPEL
+      yum: 
+        name: epel-release
+        state: latest
+    
+    - name: Ensure packages are installed
+      yum: 
+        name: "{{ packages }}" 
+        update_cache: yes 
+        state: latest
+      vars:
+        packages:
+        - wget
+        - git
+        - net-tools
+        - vim
+        - curl
+        - htop
+        - tmux
+        - yum-utils
+        - device-mapper-persistent-data
+        - lvm2
+        - pigz
+        - nfs-utils
+        - drpm
+        - chrony
+
+    - name: Enable Chrony
+      service:
+          name: chronyd
+          enabled: true
+          state: started
+
+    - name: Enable Docker Repo
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+
+    - name: Install Docker packages
+      yum: 
+        name: docker-ce-18.06.2.ce 
+        update_cache: yes 
+        state: present
+
+    - name: Creating /etc/docker directory
+      file:
+        path: /etc/docker
+        state: directory
+
+    - name: Set daemon.json (/etc/docker)
+      blockinfile:
+        path: /etc/docker/daemon.json
+        create: yes
+        marker: ""
+        block: |
+          {
+            "exec-opts": ["native.cgroupdriver=systemd"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m"
+            },
+            "storage-driver": "overlay2",
+            "storage-opts": [
+              "overlay2.override_kernel_check=true"
+            ]
+          }
+
+    - name: Remove blank lines blockinfile put in
+      lineinfile :
+        path: /etc/docker/daemon.json
+        state: absent
+        regexp: '^$'
+
+    - name: Creating /etc/systemd/system/docker.service.d
+      file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+
+    - name: Force systemd to re-execute itself
+      systemd:
+        daemon_reexec: yes
+
+    - name: Start and Enable Docker-Service on boot
+      service:
+        name: docker
+        enabled: yes
+        state: started
