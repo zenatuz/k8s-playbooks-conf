@@ -1,0 +1,103 @@
+# Ansible Playbook: install.yml
+---
+- hosts: all
+  tasks:
+    - name: Creating kubernetes repository file
+      file:
+        path: "/etc/yum.repos.d/kubernetes.repo"
+        state: touch
+
+    - name: Enable K8S Repository
+      blockinfile:
+        path: /etc/yum.repos.d/kubernetes.repo
+        marker: ""
+        block: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=1
+          gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+
+    - name: Remove blank lines blockinfile put in
+      lineinfile :
+        path: /etc/yum.repos.d/kubernetes.repo
+        state: absent
+        regexp: '^$'
+
+    - name: Set SELinux in permissive mode (effectively disabling it)
+      selinux:
+        policy: targeted
+        state: permissive
+
+    - name: Install Kubernetes packages
+      yum: 
+        name: "{{ packages }}" 
+        update_cache: yes 
+        state: present
+      vars:
+        packages:
+        - kubelet-1.18.16-0
+        - kubeadm-1.18.16-0
+        - kubectl-1.18.16-0
+
+    - name: Disable Firewalld
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+        masked: yes
+
+    - name: Disable SWAP since kubernetes can't work with swap enabled
+      command: swapoff -a
+
+    - name: Remove SWAP - Remove from /etc/fstab
+      mount:
+        name: swap
+        fstype: swap
+        state: absent   
+
+    - name: Enable routing (net.ipv4.ip_forward)
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: Set bridge-nf-call-{iptables,ip6tables} to 1
+      sysctl:
+        name: "{{ item }}"
+        value: "1"
+        sysctl_set: yes
+        state: present
+        reload: yes
+      with_items:
+        - net.bridge.bridge-nf-call-ip6tables
+        - net.bridge.bridge-nf-call-iptables
+  
+    - name: just force systemd to re-execute itself
+      systemd:
+        daemon_reexec: yes
+        daemon_reload: yes
+
+    - name: Add docker and kubernetes packages to YUM exclude list
+      lineinfile:
+        path: /etc/yum.conf
+        line: exclude=kubeadm kubelet kubectl kubernetes-cni docker-ce
+        create: yes
+
+    - name: Enable Kubelet service
+      service:
+          name: kubelet
+          enabled: true
+
+    - name: Update the /etc/hosts file with node name
+      lineinfile:
+        path: "/etc/hosts"
+        regexp: "{{ hostvars[item]['ansible_env'].SSH_CONNECTION.split(' ')[2] }}\t{{ hostvars[item]['ansible_hostname']}}\t{{ hostvars[item]['ansible_hostname']}}"
+        line: "{{ hostvars[item]['ansible_env'].SSH_CONNECTION.split(' ')[2] }}\t{{ hostvars[item]['ansible_hostname']}}\t{{ hostvars[item]['ansible_hostname']}}"
+        state: present
+        backup: yes
+      with_items: "{{groups['all']}}"
